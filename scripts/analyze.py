@@ -645,16 +645,16 @@ def build_business(D,out):
         ws3.cell(row=rr,column=4,value=p["次数"]).number_format="#,##0"
         ws3.cell(row=rr,column=5,value=len(dset)).alignment=AC
         ws3.cell(row=rr,column=6,value=round(p["积分"]/len(dset)) if dset else 0).number_format="#,##0"
-        ws3.cell(row=rr,column=7,value=p["积分"]/TOT_JI).number_format="0.0%"
+        ws3.cell(row=rr,column=7,value=f"{p['积分']/TOT_JI*100:.1f}%").alignment=AC
         for j in range(1,8): ws3.cell(row=rr,column=j).border=Border(bottom=thin)
     last=f0+len(people)-1; sr=last+1
     ws3.cell(row=sr,column=2,value="合计")
     ws3.cell(row=sr,column=3,value=TOT_JI).number_format="#,##0"
     ws3.cell(row=sr,column=4,value=TOT_CNT).number_format="#,##0"
-    ws3.cell(row=sr,column=7,value=1.0).number_format="0.0%"
+    ws3.cell(row=sr,column=7,value="100.0%").alignment=AC
     for j in range(1,8):
         c=ws3.cell(row=sr,column=j); c.font=F_SUMF; c.fill=FS; c.alignment=AC
-    ws3.conditional_formatting.add(f"G{f0}:G{last}",DataBarRule(start_type="num",start_value=0,end_type="max",color=PRIMARY,showValue=True))
+    ws3.conditional_formatting.add(f"C{f0}:C{last}",DataBarRule(start_type="num",start_value=0,end_type="max",color=PRIMARY,showValue=True))
     for j,w_ in enumerate([6,14,12,14,10,12,10],1): ws3.column_dimensions[get_column_letter(j)].width=w_
     note(ws3,sr+2,f"集中度：Top1 占 {conc1*100:.1f}%，Top3 合计 {top3*100:.1f}%。"+("分散度健康（无单点依赖）。" if conc1<0.3 else "集中度偏高（存在单点依赖风险）。"))
 
@@ -670,12 +670,13 @@ def build_business(D,out):
             ws4.cell(row=rr,column=4,value=d["积分"]).number_format="#,##0"
             ws4.cell(row=rr,column=5,value=d["次数"]).number_format="#,##0"
             ws4.cell(row=rr,column=6,value=round(d["积分"]/d["次数"],1)).number_format="0.0"
-            ws4.cell(row=rr,column=7,value=d["积分"]/TOT_JI).number_format="0.0%"
+            ws4.cell(row=rr,column=7,value=f"{d['积分']/TOT_JI*100:.1f}%").alignment=AC
             ws4.cell(row=rr,column=8,value=len(d["用户"])).alignment=AC
             for j in range(1,9): ws4.cell(row=rr,column=j).border=Border(bottom=thin)
         last=f0+len(models)-1; sr=last+1
         ws4.cell(row=sr,column=2,value="合计")
-        for col,val,fmt in [(4,TOT_JI,"#,##0"),(5,TOT_CNT,"#,##0"),(7,1.0,"0.0%")]: ws4.cell(row=sr,column=col,value=val).number_format=fmt
+        for col,val,fmt in [(4,TOT_JI,"#,##0"),(5,TOT_CNT,"#,##0")]: ws4.cell(row=sr,column=col,value=val).number_format=fmt
+        ws4.cell(row=sr,column=7,value="100.0%").alignment=AC
         for j in range(1,9):
             c=ws4.cell(row=sr,column=j); c.font=F_SUMF; c.fill=FS; c.alignment=AC
         ws4.conditional_formatting.add(f"D{f0}:D{last}",DataBarRule(start_type="num",start_value=0,end_type="max",color=PRIMARY,showValue=True))
@@ -693,7 +694,7 @@ def build_business(D,out):
         for j in range(1,5): ws5.cell(row=rr,column=j).border=Border(bottom=thin)
     r=f0+len(D["rech"])+1
     for lab,val,fmt,dg in [("充值总额（积分）",POOL,"#,##0",False),("　实充",PAID,"#,##0",False),("　赠送",POOL-PAID,"#,##0",False),
-        ("累计消耗（积分）",TOT_JI,"#,##0",False),("消耗进度",TOT_JI/POOL if POOL else 0,"0.0%",True),
+        ("累计消耗（积分）",TOT_JI,"#,##0",False),("消耗进度",(f"{TOT_JI/POOL*100:.1f}%" if POOL else "-"),None,True),
         ("实充积分已消耗",PAID_USED,"#,##0",True),("当前剩余（积分）",BALANCE,"#,##0",False),
         ("预计耗尽日",eta,None,True),("从充值到耗尽的周期",f"约 {span+round(left)} 天",None,False)]:
         a=ws5.cell(row=r,column=1,value=lab); a.border=Border(bottom=thin)
@@ -704,15 +705,64 @@ def build_business(D,out):
     note(ws5,r+1,"续费预测：预计耗尽日 = 最后消耗日 + 剩余积分 ÷ 近7天日均消耗。")
     for j,w_ in enumerate([28,16,14,10],1): ws5.column_dimensions[get_column_letter(j)].width=w_
 
-    # 图表
+    # ---- 周度/月度汇总（趋势数据源，写在逐日表下方） ----
+    month=defaultdict(lambda:{"积分":0,"次数":0,"日":set()})
+    for d,a in day.items():
+        mm=month[d[:7]]; mm["积分"]+=a["积分"]; mm["次数"]+=a["次数"]; mm["日"].add(d)
+    mos=sorted(month)
+    wr0=len(seq)+7
+    ws2.cell(row=wr0,column=1,value="按周汇总").font=F_SUB
+    for j,h in enumerate(["周起始","消耗积分","调用次数(次)","活跃天数"],1): ws2.cell(row=wr0+1,column=j,value=h)
+    hrow(ws2,wr0+1,4)
+    for i,wk in enumerate(weeks):
+        rr=wr0+2+i; w=week[wk]
+        ws2.cell(row=rr,column=1,value=wk[5:]).alignment=AC
+        ws2.cell(row=rr,column=2,value=w["积分"]).number_format="#,##0"
+        ws2.cell(row=rr,column=3,value=w["次数"]).number_format="#,##0"
+        ws2.cell(row=rr,column=4,value=len(w["日"])).alignment=AC
+        for j in range(1,5): ws2.cell(row=rr,column=j).border=Border(bottom=thin)
+    wlast=wr0+1+len(weeks)
+    mr0=wlast+3
+    ws2.cell(row=mr0,column=1,value="按月汇总").font=F_SUB
+    for j,h in enumerate(["月份","消耗积分","调用次数(次)","活跃天数"],1): ws2.cell(row=mr0+1,column=j,value=h)
+    hrow(ws2,mr0+1,4)
+    for i,mo in enumerate(mos):
+        rr=mr0+2+i; mm=month[mo]
+        ws2.cell(row=rr,column=1,value=mo).alignment=AC
+        ws2.cell(row=rr,column=2,value=mm["积分"]).number_format="#,##0"
+        ws2.cell(row=rr,column=3,value=mm["次数"]).number_format="#,##0"
+        ws2.cell(row=rr,column=4,value=len(mm["日"])).alignment=AC
+        for j in range(1,5): ws2.cell(row=rr,column=j).border=Border(bottom=thin)
+    mlast=mr0+1+len(mos)
+
+    # ---- 图表：日柱（无标签）+ 周折线 + 月柱 ----
     ws_top=wb["客户经营速览"]
     ch=BarChart(); ch.type="col"; ch.title="按天消耗积分（含断档日）"; ch.style=2
     ch.y_axis.title="积分"; ch.x_axis.title="日期"
-    ch.add_data(Reference(wb["消耗节奏与趋势"],min_col=3,min_row=2,max_row=1+len(seq)),titles_from_data=True)
-    ch.set_categories(Reference(wb["消耗节奏与趋势"],min_col=1,min_row=3,max_row=2+len(seq)))
+    ch.add_data(Reference(ws2,min_col=3,min_row=2,max_row=1+len(seq)),titles_from_data=True)
+    ch.set_categories(Reference(ws2,min_col=1,min_row=3,max_row=2+len(seq)))
     for s in ch.series: s.graphicalProperties.solidFill=PRIMARY; s.graphicalProperties.line.solidFill=PRIMARY
-    labels(ch,800); ch.width=20; ch.height=8.5; ch.gapWidth=30
+    ch.legend=None; ch.y_axis.majorGridlines=ChartLines()
+    ch.width=20; ch.height=8.5; ch.gapWidth=30
     ws_top.add_chart(ch,"H3")
+    chw=LineChart(); chw.title="按周消耗积分趋势"; chw.style=2
+    chw.y_axis.title="积分"; chw.x_axis.title="周（周一起始日）"
+    chw.add_data(Reference(ws2,min_col=2,min_row=wr0+1,max_row=wlast),titles_from_data=True)
+    chw.set_categories(Reference(ws2,min_col=1,min_row=wr0+2,max_row=wlast))
+    for s in chw.series:
+        s.graphicalProperties.line.solidFill=TEAL; s.graphicalProperties.line.width=28000
+        s.marker=Marker(symbol="circle",size=6)
+    chw.legend=None; chw.y_axis.majorGridlines=ChartLines()
+    chw.width=20; chw.height=8
+    ws_top.add_chart(chw,"H21")
+    chm=BarChart(); chm.type="col"; chm.title="按月消耗积分"; chm.style=2
+    chm.y_axis.title="积分"; chm.x_axis.title="月份"
+    chm.add_data(Reference(ws2,min_col=2,min_row=mr0+1,max_row=mlast),titles_from_data=True)
+    chm.set_categories(Reference(ws2,min_col=1,min_row=mr0+2,max_row=mlast))
+    for s in chm.series: s.graphicalProperties.solidFill=ORANGE; s.graphicalProperties.line.solidFill=ORANGE
+    labels(chm,900)
+    chm.width=20; chm.height=8
+    ws_top.add_chart(chm,"H38")
 
     wb.properties.title="PIXMAX 客户经营分析"
     out_path=os.path.join(out,f"积分消耗分析_业务视角_{ENT[:12]}.xlsx")
