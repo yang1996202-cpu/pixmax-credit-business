@@ -547,12 +547,36 @@ def build_business(D,out):
     conc1=person[people[0]]["积分"]/TOT_JI
     top3=sum(person[k]["积分"] for k in people[:3])/TOT_JI
     video_share=sum(model[m]["积分"] for m in models if cat(m)=="视频生成")/TOT_JI if has_model else 1
+    # 近7天 vs 前期 模型动态（近7天 = 最后消耗日往前7个自然日）
+    s7d=(d1-timedelta(days=6)).isoformat()
+    m7=defaultdict(lambda:{"积分":0,"次数":0}); mpre=defaultdict(lambda:{"积分":0,"次数":0})
+    for r_ in D["cons"]:
+        if not F["model"] or not r_[F["model"]]: continue
+        tgt=m7 if r_["_d"]>=s7d else mpre
+        tgt[r_[F["model"]]]["积分"]+=D["pv"](r_); tgt[r_[F["model"]]]["次数"]+=1
+    J7=sum(v["积分"] for v in m7.values()); Jpre=sum(v["积分"] for v in mpre.values())
+    C7=sum(v["次数"] for v in m7.values()); Cpre=sum(v["次数"] for v in mpre.values())
+    u7=J7/C7 if C7 else 0; upre=Jpre/Cpre if Cpre else 0
+    mset=sorted(set(m7)|set(mpre),key=lambda m:-m7[m]["积分"]) if has_model else []
+    mset=[m for m in mset if m7[m]["积分"]>0 or (Jpre and mpre[m]["积分"]/Jpre*100>=1.0)]  # 滤噪：停用且前期占比<1% 的不列
+    top7=mset[0] if mset else "-"
+    top7s=m7[top7]["积分"]/J7*100 if (J7 and top7!="-") else 0
+    trend="档位平稳" if (not upre or abs(u7-upre)/upre<=0.10) else ("单价上探（转向更贵配置）" if u7>upre else "单价下探（转向更便宜配置）")
 
     wb=Workbook()
     ws=wb.active; ws.title="客户经营速览"
-    ttl(ws,f"PIXMAX 客户经营速览 · {ENT}","F")
+    ttl(ws,f"PIXMAX 客户经营速览 · {ENT}（{days[0]} ~ {days[-1]}）","F")
     r=3
-    c=ws.cell(row=r,column=1,value=f"核心结论：该客户预计 {eta} 前后耗尽积分（剩 {left:.1f} 天），建议尽快触达催充；消耗处于加速状态（近期日均是前期的 {accel:.1f} 倍）。")
+    for j,(lab,val) in enumerate([("消耗区间",f"{days[0]} → {days[-1]}"),
+                                  ("覆盖天数",f"{span} 天（有消耗 {used_days} 天 / 断档 {gap} 天）"),
+                                  ("数据截止",f"{days[-1]}（导出请核对是否含最新日期）")],start=2):
+        a=ws.cell(row=r,column=1,value=lab); a.font=F_B; a.fill=FIN; a.border=Border(bottom=thin); a.alignment=AC
+        b=ws.cell(row=r,column=2,value=val); b.font=Font(bold=True,size=11,color=xl("#1F3864")); b.alignment=AL; ws.merge_cells(f"B{r}:F{r}")
+        for j2 in range(1,7): ws.cell(row=r,column=j2).border=Border(bottom=thin)
+        r+=1
+    r+=1
+    pace='加速' if accel>1.15 else ('回落' if accel<0.85 else '平稳')
+    c=ws.cell(row=r,column=1,value=f"核心结论：该客户预计 {eta} 前后耗尽积分（剩 {left:.1f} 天，口径：余额÷近7天日均）；近期日均/前期日均 = {accel:.1f} 倍（{pace}）。若尾部逐日走势与该结论不符，以「消耗节奏与趋势」表为准。")
     c.font=Font(bold=True,size=12,color=DANGER); c.fill=FW; c.alignment=AL; ws.merge_cells(f"A{r}:F{r}")
     r+=2
     ws.cell(row=r,column=1,value="① 客户健康度").font=F_SUB; r+=1
@@ -589,11 +613,29 @@ def build_business(D,out):
     rr=r+3
     c=ws.cell(row=rr,column=1,value=f"→ 近期日均消耗是前期的 {accel:.1f} 倍。"); c.font=Font(bold=True,color=GREEN); ws.merge_cells(f"A{rr}:F{rr}")
     r=rr+2
-    ws.cell(row=r,column=1,value="③ 建议动作（PIXMAX 侧）").font=F_SUB; r+=1
-    acts=[f"1. 尽快触达催充：预计 {eta} 耗尽，只剩 {left:.1f} 天。",
-          f"2. 顺势加售：用量在加速（{accel:.1f} 倍），可推大额套餐/年包。" ,
-          f"3. 关注断档：{gap} 天零消耗（{'、'.join(g[5:] for g in gap_days)}），确认节假日或项目间歇。" ,
-          f"4. 结构健康：消耗分散在 {len(people)} 个账号，Top1 仅占 {conc1*100:.1f}%，无单点依赖。"]
+    if has_model and mset:
+        ws.cell(row=r,column=1,value=f"③ 近7天模型动态（{s7d[5:]} ~ {days[-1][5:]} vs 前期）").font=F_SUB; r+=1
+        c=ws.cell(row=r,column=1,value=f"近7天共耗 {J7:,} 积分 / {C7:,} 次；单次均价 {u7:.0f} 分 vs 前期 {upre:.0f} 分 → {trend}。主力：{top7} 占近7天 {top7s:.0f}%。")
+        c.font=F_B; c.alignment=AL; ws.merge_cells(f"A{r}:F{r}"); r+=2
+        for j,h in enumerate(["AI模型","近7天积分","近7天占比","前期占比","占比变化","解读"],1): ws.cell(row=r,column=j,value=h)
+        hrow(ws,r,6)
+        for i,m in enumerate(mset):
+            rr2=r+1+i; s7=m7[m]["积分"]; sp=mpre[m]["积分"]
+            p7=s7/J7*100 if J7 else 0; pp=sp/Jpre*100 if Jpre else 0
+            ws.cell(row=rr2,column=1,value=m)
+            ws.cell(row=rr2,column=2,value=s7).number_format="#,##0"
+            for col,v in [(3,p7),(4,pp)]:
+                cc=ws.cell(row=rr2,column=col,value=f"{v:.1f}%"); cc.alignment=AR
+            cc=ws.cell(row=rr2,column=5,value=f"{p7-pp:+.1f}%"); cc.alignment=AR
+            cc.font=Font(color=DANGER) if p7>pp else (Font(color=GREEN) if p7<pp else F_NOTE)
+            ws.cell(row=rr2,column=6,value=("近7天新增使用" if not sp and s7 else ("已停用" if sp and not s7 else ("-")))).alignment=AC
+            for j in range(1,7): ws.cell(row=rr2,column=j).border=Border(bottom=thin)
+        r=r+1+len(mset)+1
+    ws.cell(row=r,column=1,value="④ 建议动作（PIXMAX 侧）").font=F_SUB; r+=1
+    acts=[f"1. 触达催充：预计 {eta} 耗尽，剩 {left:.1f} 天（口径：余额÷近7天日均，若尾部节奏变化大请以逐日明细为准）。",
+          f"2. 加售参考：近期日均/前期日均 = {accel:.1f} 倍（{'上升' if accel>1.15 else '回落' if accel<0.85 else '平稳'}）。",
+          f"3. 断档天数：{gap} 天零消耗（{'、'.join(g[5:] for g in gap_days)}），具体原因需与客户确认，不做推测。" ,
+          f"4. 账号集中度：{len(people)} 个账号，Top1 占 {conc1*100:.1f}%（{'<30%，分散' if conc1<0.3 else '≥30%，注意单点依赖'}）。"]
     for i,a in enumerate(acts):
         c=ws.cell(row=r+i,column=1,value=a); c.alignment=AL; ws.merge_cells(f"A{r+i}:F{r+i}")
     for j,w_ in enumerate([24,22,10,16,16,30],1): ws.column_dimensions[get_column_letter(j)].width=w_
@@ -765,7 +807,9 @@ def build_business(D,out):
     ws_top.add_chart(chm,"H38")
 
     wb.properties.title="PIXMAX 客户经营分析"
-    out_path=os.path.join(out,f"积分消耗分析_业务视角_{ENT[:12]}.xlsx")
+    span_tag=f"{days[0].replace('-','')[2:]}-{days[-1].replace('-','')[2:]}"
+    gone="耗尽" if (POOL and TOT_JI/POOL>=0.95) else "进行中"
+    out_path=os.path.join(out,f"积分消耗分析_业务视角_{ENT[:12]}_{span_tag}消耗{gone}.xlsx")
     wb.save(out_path); return out_path
 
 def main():
